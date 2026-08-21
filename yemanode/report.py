@@ -90,7 +90,11 @@ def write_code_report(output_path, repo_path, languages, project_type,
                     pass
                 lines.append(f"- **Location:** `{rel}`" + (f" (line {line_no})" if line_no else ""))
             if f.get("snippet"):
-                lines.append(f"- **Evidence:** `{f['snippet']}`")
+                snip = str(f["snippet"]).replace("`", "\\`")
+                if "\n" in snip:
+                    lines.append(f"- **Evidence:**\n```\n{snip}\n```")
+                else:
+                    lines.append(f"- **Evidence:** `{snip}`")
             if f.get("fix"):
                 lines.append(f"- **Recommended fix:** {f['fix']}")
             lines.append("")
@@ -181,7 +185,11 @@ def write_generic_report(output_path, title, target_desc, findings, extra_notes=
             if f.get("file"):
                 lines.append(f"- **Location:** `{f['file']}`" + (f" (line {f['line']})" if f.get("line") else ""))
             if f.get("snippet"):
-                lines.append(f"- **Evidence:** `{f['snippet']}`")
+                snip = str(f["snippet"]).replace("`", "\\`")
+                if "\n" in snip:
+                    lines.append(f"- **Evidence:**\n```\n{snip}\n```")
+                else:
+                    lines.append(f"- **Evidence:** `{snip}`")
             if f.get("fix"):
                 lines.append(f"- **Recommended fix:** {f['fix']}")
             lines.append("")

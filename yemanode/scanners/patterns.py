@@ -46,6 +46,18 @@ RULES = {
          re.compile(r"\bassert\s+.*(auth|permission|admin|role)"),
          "medium",
          "assert statements are stripped with -O. Use explicit if/raise for authorization checks."),
+        ("SSRF Risk (user-supplied URL in HTTP request)",
+         re.compile(r"requests\.(get|post|put|delete|request)\s*\(\s*(?!['\"]https?://)[A-Za-z0-9_.]+\b"),
+         "high",
+         "Validate and sanitize user-supplied URLs against an allow-list of domains before making HTTP requests (SSRF prevention)."),
+        ("SSTI (Server-Side Template Injection)",
+         re.compile(r"render_template_string\s*\(|jinja2\.Template\s*\([^)]*f['\"]"),
+         "high",
+         "Avoid passing dynamic string templates or f-strings to render_template_string(). Use static template files."),
+        ("XXE (XML External Entity Risk)",
+         re.compile(r"etree\.parse\s*\(|xml\.dom\.minidom\.parse"),
+         "medium",
+         "Ensure XML parsers disable external entity resolution (resolve_entities=False / defusedxml)."),
     ],
     ".js": [
         ("SQL Injection (template literal / concat into query)",
@@ -80,6 +92,10 @@ RULES = {
          re.compile(r"localStorage\.(setItem|getItem)\s*\(\s*['\"][^'\"]*(token|password|secret|key|auth)"),
          "medium",
          "Avoid storing tokens/passwords in localStorage (XSS-accessible). Prefer httpOnly cookies or memory."),
+        ("SSRF Risk (dynamic URL in fetch/axios)",
+         re.compile(r"(fetch|axios\.(get|post|put|delete))\s*\(\s*(?!['\"]https?://)[A-Za-z0-9_.]+\b"),
+         "high",
+         "Validate target URLs against a domain allow-list server-side before fetching."),
     ],
     ".ts": None,
     ".jsx": None,
@@ -258,12 +274,17 @@ def scan_files(file_list):
     findings = []
     for path in file_list:
         ext = os.path.splitext(path)[1].lower()
-        # Also treat AndroidManifest specially even if named without path
         basename = os.path.basename(path).lower()
+        
+        # Restrict Android manifest rules strictly to AndroidManifest.xml
         rules = RULES.get(ext)
-        if basename == "androidmanifest.xml":
-            rules = RULES.get(".xml", [])
-        if basename in ("dockerfile",):
+        if ext == ".xml":
+            if basename == "androidmanifest.xml":
+                rules = RULES.get(".xml", [])
+            else:
+                rules = None
+
+        if basename.startswith("dockerfile"):
             rules = [
                 ("Dockerfile runs as root / missing USER",
                  re.compile(r"^FROM\s+", re.I),
@@ -274,6 +295,7 @@ def scan_files(file_list):
                  "high",
                  "Do not bake secrets into image layers via ARG/ENV. Use runtime secrets or multi-stage carefully."),
             ]
+
         if not rules:
             continue
         try:
@@ -296,3 +318,4 @@ def scan_files(file_list):
                         "fix": fix,
                     })
     return findings
+

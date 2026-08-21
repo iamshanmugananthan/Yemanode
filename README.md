@@ -2,7 +2,7 @@
 
 **Yemanode** is a powerful, multi-target **ethical security scanner** designed for developers, DevOps engineers, and security auditors.
 
-With a single unified CLI, Yemanode performs static security analysis and passive vulnerability checks against **source repositories**, **live REST APIs**, **Android APK packages**, and **native desktop binaries**.
+With a single unified CLI, Yemanode performs static security analysis and passive vulnerability checks against **source repositories**, **OpenAPI/Swagger specs & Postman collections**, **live REST APIs**, **JWT tokens**, **Android APK packages**, and **native desktop binaries**.
 
 ---
 
@@ -10,8 +10,9 @@ With a single unified CLI, Yemanode performs static security analysis and passiv
 
 | Feature | Target Type | Command | Description |
 |---|---|---|---|
-| 📂 **Source Tree Auditor** | Source Code & IaC | `yemanode scan-repo` | Scans source folders for hardcoded secrets, injection flaws, unsafe patterns, and vulnerable dependencies. |
-| 🌐 **Live API Scanner** | REST / AWS API Gateway | `yemanode scan-api` | Conducts passive HTTP probes for TLS configuration, missing headers, CORS flaws, and path disclosure. |
+| 📂 **Source Tree Auditor** | Source Code & IaC | `yemanode scan-repo` | Scans source folders for hardcoded secrets, OWASP Top 10 injection flaws, unsafe patterns, and vulnerable dependencies. Supports `--diff` PR scoping. |
+| 🌐 **Live API & Contract Scanner** | REST / OpenAPI / Postman | `yemanode scan-api` | Conducts passive HTTP probes for TLS, security headers, CORS, and audits OpenAPI / Postman specifications for missing auth and security risks. |
+| 🔑 **JWT Security Analyzer** | JWT Tokens / Files | `yemanode scan-jwt` | Decodes JWT header/payload to detect unsigned tokens (`alg: none`), weak HMAC algorithms, expired tokens, and leaked PII claims. |
 | 📱 **Android APK Analyzer** | Android Packages (`.apk`) | `yemanode scan-apk` | Analyzes Manifest security flags, cleartext traffic, embedded secrets, and insecure file modes. |
 | 💻 **Native Binary Scanner** | Executables (`ELF`/`PE`/`Mach-O`) | `yemanode scan-binary` | Extracts strings from native binaries to detect leaked private keys, credentials, and dangerous C functions. |
 
@@ -22,6 +23,7 @@ With a single unified CLI, Yemanode performs static security analysis and passiv
 ### 1. Source Repository & Codebase Scanner (`scan-repo`)
 Deep static analysis across multi-language source trees.
 - **Language Detection:** Automatically identifies Python, JavaScript/TypeScript, Java, Kotlin, Go, PHP, Ruby, Rust, C/C++, C#, Shell, HTML, Dockerfile, Terraform, and configuration files.
+- **Git PR Diff Scoping (`--diff`):** Restricts security scans strictly to files modified relative to a base branch (e.g., `--diff-base origin/main`) for fast CI/CD pull-request checks.
 - **Hardcoded Secret Detection:** Scans source code for:
   - AWS Access Keys & Secret Keys
   - Google Cloud API Keys & OAuth Client Secrets
@@ -30,44 +32,51 @@ Deep static analysis across multi-language source trees.
   - Slack Tokens & Webhooks, Stripe Live Keys, Twilio SID, SendGrid Keys
   - JWT Tokens, Private Key Blocks (`PEM`, `OPENSSH`, `RSA`)
   - Database Connection Strings (`PostgreSQL`, `MySQL`, `MongoDB`, `Redis`)
-- **Insecure Code Pattern Auditing:**
+- **OWASP Top 10 Insecure Code Pattern Auditing:**
   - **SQL Injection:** String concatenation/formatting into query functions.
   - **Command Injection:** `os.system`, `subprocess(shell=True)`, `child_process.exec`, `system()`, `passthru()`.
+  - **SSRF (Server-Side Request Forgery):** Dynamic user-supplied URLs passed to HTTP clients (`requests`, `fetch`, `axios`).
+  - **SSTI (Server-Side Template Injection):** Dynamic string rendering (`render_template_string`, `jinja2.Template`).
+  - **XXE (XML External Entity):** Unsafe XML parser configurations (`etree.parse`, `minidom.parse`).
   - **Insecure Deserialization:** Python `pickle`/`yaml.load`, Java `ObjectInputStream`, PHP `unserialize`, .NET `BinaryFormatter`.
   - **Dangerous Execution:** `eval()`, `exec()`, `document.write()`.
   - **Crypto & Secrets:** Weak hashing (`MD5`, `SHA1`), insecure random generators, hardcoded `SECRET_KEY`.
   - **Infrastructure as Code (IaC):** Open Terraform Security Groups (`0.0.0.0/0`), Dockerfile secrets passed in `ARG`/`ENV`.
 - **Dependency Vulnerability Scanning:** Automatically executes `pip-audit` for Python manifests or `npm audit` for Node.js projects when available.
 
-### 2. Live API Endpoint Security Prober (`scan-api`)
-Passive, non-destructive security probes designed for REST APIs and AWS API Gateway endpoints.
+### 2. Live API Endpoint & Specification Scanner (`scan-api`)
+Passive, non-destructive security probes designed for REST APIs, AWS API Gateway endpoints, OpenAPI/Swagger specifications, and Postman collections.
+- **OpenAPI & Postman Contract Auditing (`-s / --spec`):**
+  - Parses OpenAPI v2/v3 (`.json` / `.yaml`) and Postman Collection v2/v2.1 exports.
+  - Flags endpoints missing declared authentication schemes.
+  - Detects unauthenticated state-changing HTTP verbs (`DELETE`, `PUT`, `PATCH`).
+  - Flags insecure HTTP transport declarations (`schemes: ["http"]`).
+  - Auto-discovers paths and generates targeted passive probes.
 - **TLS & Certificate Validation:** Enforces HTTPS, checks for outdated TLS versions (TLS 1.0 / 1.1), and validates SSL certificate trust.
-- **Security Headers Audit:** Detects missing standard security headers:
-  - `Strict-Transport-Security` (HSTS)
-  - `X-Content-Type-Options: nosniff`
-  - `Content-Security-Policy` (CSP)
-  - `X-Frame-Options: DENY`
-  - `Referrer-Policy` & `Permissions-Policy`
-  - `Cache-Control` for sensitive data
-- **Authentication Enforcement:** Checks if the endpoint returns sensitive payload data without credentials.
+- **Security Headers Audit:** Detects missing standard security headers (`HSTS`, `X-Content-Type-Options`, `CSP`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`).
+- **Authentication Enforcement:** Checks if endpoints return sensitive payload data without credentials.
 - **Stack Trace & Error Leakage:** Identifies unhandled exceptions leaking internal framework details (e.g., Python `Traceback`, Java `NullPointerException`, SQL errors).
 - **CORS Misconfiguration:** Detects wildcard origin (`*`), unsafe credentials combination (`Access-Control-Allow-Credentials: true`), and arbitrary origin reflection.
 - **Unnecessary HTTP Verbs:** Probes for enabled risky HTTP methods (`PUT`, `DELETE`, `PATCH`, `TRACE`, `CONNECT`).
 - **Information Disclosure:** Probes for exposed administrative and configuration endpoints (`/.env`, `/.git/HEAD`, `/swagger.json`, `/openapi.json`, `/actuator`, `/debug`, `/metrics`).
-- **SSRF Warning System:** Alerts when target endpoints resolve to loopback or private subnet addresses.
+- **SSRF Guard:** Alerts when target endpoints resolve to loopback or private subnet addresses.
 
-### 3. Android APK Security Scanner (`scan-apk`)
+### 3. JWT Security Analyzer (`scan-jwt`)
+Structural JWT token decoder and claim security auditor (no secret key required).
+- **Unsigned Token Detection:** Flags critical `alg: "none"` bypass attempts.
+- **Weak Signing Algorithms:** Alerts on symmetric `HS256` usage on public microservices.
+- **Header Injection Risks:** Detects untrusted inline key injection headers (`jwk` / `jku`).
+- **Expiration Auditing:** Checks for missing `exp` claims and flagged expired tokens.
+- **Sensitive Claim Leakage:** Scans payload claims for leaked credentials (`password`, `ssn`, `private_key`, `api_key`).
+
+### 4. Android APK Security Scanner (`scan-apk`)
 Static analysis of compiled Android APK files without requiring heavy external reverse-engineering setups.
-- **Manifest Security Flag Auditing:** Checks `AndroidManifest.xml` for dangerous flags:
-  - `android:debuggable="true"`
-  - `android:allowBackup="true"`
-  - `usesCleartextTraffic="true"`
-  - Unprotected `exported="true"` activities, services, and receivers
+- **Manifest Security Flag Auditing:** Checks `AndroidManifest.xml` for dangerous flags (`debuggable="true"`, `allowBackup="true"`, `usesCleartextTraffic="true"`, exported components).
 - **Secret & Credential Extraction:** Extracts embedded printable strings to detect hardcoded API keys, private keys, and OAuth secrets.
 - **Insecure Storage Modes:** Detects deprecated `MODE_WORLD_READABLE` and `MODE_WORLD_WRITEABLE` storage flags in smali and XML resources.
 - **Built-in Zip Slip Protection:** Safeguards the scanning system against path traversal exploits embedded in malicious APK zip headers.
 
-### 4. Desktop & Native Binary Scanner (`scan-binary`)
+### 5. Desktop & Native Binary Scanner (`scan-binary`)
 Lightweight static string and pattern analysis for compiled binaries.
 - **Architecture Identification:** Detects `ELF` (Linux), `PE` (Windows), `Mach-O` (macOS), or raw binaries.
 - **Dangerous C Functions:** Identifies buffer-overflow prone legacy functions (`gets`, `strcpy`, `sprintf`, `scanf`).
@@ -108,15 +117,16 @@ yemanode
    \ V /  __/ |\/| | / _ \ |  \| | |_| | |_) |  _|  
     |_| \___|_|  |_/_/   \_\_| \_|\___/|____/|_____|
 
-  Multi-target ethical security scanner v2.0.0
-  Targets: source folder · API URL · APK · desktop binary
+  Multi-target ethical security scanner  v2.0.0
+  Targets: source folder · API / OpenAPI · JWT · APK · binary
 
 What would you like to scan?
 
   [1] Local source / project folder
-  [2] Live API URL (AWS API Gateway, REST, etc.)
+  [2] Live API URL or OpenAPI / Postman spec
   [3] Android APK file
   [4] Desktop / native binary (ELF, PE, Mach-O, etc.)
+  [5] JWT Token / payload analyzer
 
 Choice [1]: 
 ```
@@ -130,39 +140,45 @@ Point Yemanode to any local project folder:
 ```bash
 yemanode scan-repo /path/to/your/project
 ```
+**Git PR Diff Scoped Scanning:**
+```bash
+yemanode scan-repo ./src --diff --diff-base origin/main
+```
 **Custom Report Output Path:**
 ```bash
 yemanode scan-repo ./src -o ./reports/my_audit_report.md
 ```
 
-#### 2. Scanning a Live API URL (`scan-api`)
+#### 2. Scanning a Live API or OpenAPI Contract (`scan-api`)
 Test a live REST API or AWS API Gateway endpoint:
 ```bash
-yemanode scan-api https://lljy7gjuqf.execute-api.ap-south-1.amazonaws.com
+yemanode scan-api https://api.example.com/prod
 ```
-**Custom Report Output Path:**
+**Audit OpenAPI / Swagger Spec or Postman Collection:**
 ```bash
-yemanode scan-api https://api.example.com/prod -o ./api_report.md
+yemanode scan-api -s ./openapi.yaml
+# Or probe live base URL using spec paths:
+yemanode scan-api https://api.example.com -s ./openapi.json
 ```
 
-#### 3. Scanning an Android APK (`scan-apk`)
+#### 3. Auditing JWT Tokens (`scan-jwt`)
+Analyze a raw JWT string or a file containing JWT tokens:
+```bash
+yemanode scan-jwt "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwicGFzc3dvcmQiOiJzZWNyZXQxMjMifQ."
+# Or scan file:
+yemanode scan-jwt ./tokens.txt
+```
+
+#### 4. Scanning an Android APK (`scan-apk`)
 Analyze an `.apk` file:
 ```bash
 yemanode scan-apk ./myapp.apk
 ```
-**Custom Report Output Path:**
-```bash
-yemanode scan-apk ./build/outputs/app-release.apk -o ./apk_audit.md
-```
 
-#### 4. Scanning a Native Desktop Binary (`scan-binary`)
+#### 5. Scanning a Native Desktop Binary (`scan-binary`)
 Analyze a Linux ELF, Windows EXE/DLL, or macOS binary:
 ```bash
 yemanode scan-binary /usr/local/bin/custom_tool
-```
-**Custom Report Output Path:**
-```bash
-yemanode scan-binary ./bin/server -o ./binary_audit.md
 ```
 
 ---
@@ -172,9 +188,9 @@ yemanode scan-binary ./bin/server -o ./binary_audit.md
 Every scan produces a detailed, structured Markdown security report.
 
 ### Severity Hierarchy
-- 🔴 **CRITICAL:** High-impact flaws (Leaked Private Keys, Hardcoded AWS Secrets, Zip Slip, Disabling TLS Verification).
-- 🟠 **HIGH:** Exploitable vulnerabilities (SQL Injection, Command Execution, Unauthenticated Sensitive APIs, Debuggable APKs).
-- 🟡 **MEDIUM:** Misconfigurations (Missing HSTS Header, Stack Trace Leakage, Dangerous Functions, assertion security checks).
+- 🔴 **CRITICAL:** High-impact flaws (Leaked Private Keys, Hardcoded AWS Secrets, Zip Slip, `alg: none` JWTs, Disabling TLS Verification).
+- 🟠 **HIGH:** Exploitable vulnerabilities (SQL Injection, Command Injection, SSRF, SSTI, Unauthenticated Sensitive APIs, Debuggable APKs).
+- 🟡 **MEDIUM:** Misconfigurations (Missing HSTS Header, Stack Trace Leakage, XXE Risk, Missing `exp` Claim, Dangerous Functions).
 - 🔵 **LOW:** Hardening recommendations (Missing `X-Content-Type-Options`, Verbose `Server` headers, `allowBackup=true`).
 - ⚪ **INFO:** Information disclosure and scan environment details.
 

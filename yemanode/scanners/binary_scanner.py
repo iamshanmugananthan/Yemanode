@@ -162,7 +162,7 @@ def scan_binary(path: str):
     seen = set()
     unique = []
     for f in findings:
-        key = (f.get("type"), f.get("snippet", "")[:60])
+        key = (f.get("type"), f.get("file"), f.get("snippet", "")[:60])
         if key not in seen:
             seen.add(key)
             unique.append(f)

@@ -66,13 +66,22 @@ def _is_private_or_loopback_host(hostname: str) -> bool:
     return False
 
 
-def _get(url, **kwargs):
+def _get(url, verify=True, **kwargs):
     try:
         parsed = urlparse(url)
         if _is_private_or_loopback_host(parsed.hostname):
-            # Safe handling for private/internal target probing
             pass
-        return requests.get(url, timeout=TIMEOUT, allow_redirects=True, **kwargs)
+        return requests.get(url, timeout=TIMEOUT, allow_redirects=True, verify=verify, **kwargs)
+    except requests.exceptions.SSLError as e:
+        # Fallback with unverified attempt so security checks can complete
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            resp = requests.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False, **kwargs)
+            resp._ssl_error = str(e)
+            return resp
+        except Exception:
+            return e
     except requests.RequestException as e:
         return e
 
@@ -105,7 +114,6 @@ def check_tls(url):
                         "detail": f"Server negotiated {version}.",
                         "fix": "Enforce TLS 1.2 minimum (preferably TLS 1.3 only) on the gateway / load balancer.",
                     })
-                # Basic cipher check is hard without more probing; skip for passivity.
     except ssl.SSLCertVerificationError as e:
         findings.append({
             "type": "TLS certificate verification failed",
@@ -130,6 +138,15 @@ def check_security_headers(url):
             "detail": str(resp),
             "fix": "Confirm the URL, stage name, and network access before re-scanning.",
         }]
+
+    if getattr(resp, "_ssl_error", None):
+        findings.append({
+            "type": "TLS / SSL Verification Error encountered during probe",
+            "severity": "high",
+            "target": url,
+            "detail": resp._ssl_error,
+            "fix": "Fix TLS certificate trust issue or intermediate chain configuration.",
+        })
 
     for header, (severity, fix) in SECURITY_HEADERS.items():
         if header not in resp.headers:
@@ -190,7 +207,7 @@ def check_auth_enforcement(url):
 def check_cors(url):
     findings = []
     try:
-        resp = requests.options(url, timeout=TIMEOUT, headers={
+        resp = requests.options(url, timeout=TIMEOUT, verify=False, headers={
             "Origin": "https://evil-attacker-test.invalid",
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "Authorization,Content-Type",
@@ -233,7 +250,7 @@ def check_http_methods(url):
     allowed = []
     for method in risky:
         try:
-            resp = requests.request(method, url, timeout=TIMEOUT)
+            resp = requests.request(method, url, timeout=TIMEOUT, verify=False)
             if resp.status_code not in (401, 403, 404, 405, 501):
                 allowed.append((method, resp.status_code))
         except requests.RequestException:
@@ -261,7 +278,7 @@ def check_information_disclosure(url):
     base = f"{parsed.scheme}://{parsed.netloc}"
     for path in candidates:
         try:
-            r = requests.head(base + path, timeout=5, allow_redirects=False)
+            r = requests.head(base + path, timeout=5, allow_redirects=False, verify=False)
             if r.status_code == 200:
                 findings.append({
                     "type": f"Potentially sensitive path accessible: {path}",

@@ -24,8 +24,10 @@ elif command -v pip3 >/dev/null 2>&1; then
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         SHELL_RC="$HOME/.bashrc"
         [[ "$SHELL" == *zsh* ]] && SHELL_RC="$HOME/.zshrc"
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
-        echo "[*] Added ~/.local/bin to PATH in $SHELL_RC — restart your terminal or run: source $SHELL_RC"
+        if ! grep -q '\.local/bin' "$SHELL_RC" 2>/dev/null; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+            echo "[*] Added ~/.local/bin to PATH in $SHELL_RC — restart your terminal or run: source $SHELL_RC"
+        fi
     fi
 else
     echo "Error: neither pipx nor pip3 found. Install Python 3 + pip first." >&2

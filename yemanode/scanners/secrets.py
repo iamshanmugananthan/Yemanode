@@ -82,6 +82,8 @@ def scan_files(file_list):
             continue
 
         for lineno, line in enumerate(lines, start=1):
+            if "re.compile(" in line or "RULES = [" in line:
+                continue
             for name, pattern, severity in RULES:
                 m = pattern.search(line)
                 if m and not _is_probably_placeholder(m.group(0)):
