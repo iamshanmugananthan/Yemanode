@@ -10,6 +10,7 @@ With a single unified CLI, Yemanode performs static security analysis and passiv
 
 | Feature | Target Type | Command | Description |
 |---|---|---|---|
+| 🌐 **Website URL Loophole Auditor** | Live Website / Web App URL | `yemanode analyse-url` | Conducts full-spectrum hacker-grade loophole audit (TLS, Security Headers, Cookies, CORS, HTTP Verbs, Recon Paths, DOM/Secrets, Redirects, Error Leaks) and generates an executive `.md` fix report with copy-paste configs. |
 | 🥷 **Hacker Pentest Engine** | Any Target (Repo/API/APK/Binary/JWT) | `yemanode hacker-test` | Executes progressive pentest attack methods (Levels 1 to 10 max) against any target and generates an action-oriented fix report. |
 | 📂 **Source Tree Auditor** | Source Code & IaC | `yemanode scan-repo` | Scans source folders for hardcoded secrets, OWASP Top 10 injection flaws, unsafe patterns, and vulnerable dependencies. Supports `--diff` PR scoping. |
 | 🌐 **Live API & Contract Scanner** | REST / OpenAPI / Postman | `yemanode scan-api` | Conducts passive HTTP probes for TLS, security headers, CORS, and audits OpenAPI / Postman specifications for missing auth and security risks. |
@@ -18,11 +19,27 @@ With a single unified CLI, Yemanode performs static security analysis and passiv
 | 💻 **Native Binary Scanner** | Executables (`ELF`/`PE`/`Mach-O`) | `yemanode scan-binary` | Extracts strings from native binaries to detect leaked private keys, credentials, and dangerous C functions. |
 | ⚡ **API Load & Rate-Limit Tester** | Live API / Gateway URL | `yemanode load-test` | Performs controlled concurrent load testing to audit rate limiting, throughput (RPS), status distribution, and latency percentiles (P50/P95/P99). |
 
+
 ---
 
 ## 🔍 Feature Deep Dive
 
-### 1. 🥷 Hacker Pentest Mode (`hacker-test` / `-H 1..10`)
+### 1. 🌐 Website URL Loophole & Security Auditor (`analyse-url`)
+Full-spectrum offensive & defensive security audit of live websites and web applications with a hacker-grade loophole analysis engine.
+- **TLS & Transport Cryptography:** Checks plain HTTP enforcement, HTTP-to-HTTPS 301 redirection, deprecated TLS versions (TLS 1.0/1.1), and SSL certificate expiration & trust.
+- **Security Headers & Modern Defenses:** Audits `Strict-Transport-Security` (HSTS), `Content-Security-Policy` (CSP quality, `unsafe-inline`, `unsafe-eval`, `frame-ancestors`), `X-Frame-Options` (Clickjacking), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, and `Cross-Origin-Opener-Policy` (COOP).
+- **Cookie Security Audit:** Audits all `Set-Cookie` headers for missing `HttpOnly`, missing `Secure`, missing/weak `SameSite` (`Lax`/`Strict`), and prefix conventions (`__Host-`, `__Secure-`).
+- **CORS Misconfiguration Probing:** Detects wildcard origins (`*`) with credentials, unvalidated Origin header reflection, and null origin permissions.
+- **Dangerous HTTP Methods & Verb Tampering:** Tests for enabled `TRACE` (Cross-Site Tracing / XST) and unauthenticated state-changing `PUT`/`DELETE` verbs.
+- **Reconnaissance & Exposed Sensitive Files:** Concurrent probe for exposed `/.env`, `/.git/HEAD`, `/.htaccess`, `/.htpasswd`, `/backup.zip`, `/database.sql`, `/phpinfo.php`, Spring `/actuator/env`, `/metrics`, `/_debugbar`, and admin panels (`/admin`, `/wp-admin/`, `/phpmyadmin/`).
+- **robots.txt & security.txt Audit:** Parses `robots.txt` for leaked internal paths and verifies RFC 9116 `/.well-known/security.txt` vulnerability disclosure policies.
+- **DOM & Client-Side HTML Security:** Detects reverse tabnabbing (`target="_blank"` without `rel="noopener noreferrer"`), insecure forms submitting over HTTP, missing anti-CSRF tokens in POST forms, mixed content assets, leaked developer comments, and hardcoded secrets/API keys (AWS, Google, Stripe, JWTs) in client scripts.
+- **Open Redirect Parameter Audit:** Tests query parameters (`?redirect=`, `?return=`, `?next=`) for unvalidated domain redirection vulnerabilities.
+- **Error Stack Trace Leakage:** Probes 404/malformed routes for verbose framework stack traces (Django, Flask, Spring, Express, Rails, ASP.NET, SQL errors).
+- **Vulnerability Chaining & Attack Scenarios:** Correlates weaknesses to illustrate realistic hacker attack paths.
+- **Executive Score & Action Plan (.md):** Calculates a 0-100 Security Score, Letter Grade (A+ to F), and generates a comprehensive Markdown report with copy-paste Nginx, Apache, and Express remediation snippets.
+
+### 2. 🥷 Hacker Pentest Mode (`hacker-test` / `-H 1..10`)
 Progressive offensive security pentesting framework executing up to **10 progressive attack methods** against any target.
 - **Max Level Limit:** Level `1` (light scan) to Level `10` (maximum deep attack methods).
 - **Progressive Method Levels:**
@@ -102,29 +119,48 @@ yemanode
     |_| \___|_|  |_/_/   \_\_| \_|\___/|____/|_____|
 
   Multi-target ethical security scanner  v2.0.0
-  Targets: source folder · API / OpenAPI · JWT · APK · binary · Hacker Mode (L1-10)
+  Targets: source folder · Website URLs · API / OpenAPI · JWT · APK · binary · Hacker Mode (L1-10) · Load Testing
 
 What would you like to scan?
 
   [1] Local source / project folder
   [2] Live API URL or OpenAPI / Postman spec
-  [3] Android APK file
-  [4] Desktop / native binary (ELF, PE, Mach-O, etc.)
-  [5] JWT Token / payload analyzer
-  [6] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)
+  [3] 🌐 Website URL Loophole & Security Auditor (analyse-url)
+  [4] Android APK file
+  [5] Desktop / native binary (ELF, PE, Mach-O, etc.)
+  [6] JWT Token / payload analyzer
+  [7] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)
+  [8] ⚡ API Load Test & Rate-Limit Audit
 
-Choice [1]: 6
+Choice [1]: 3
 ```
 
 ---
 
 ### Mode B: Direct Command Line Interface (CLI)
 
-#### 1. 🥷 Running Hacker Pentest Mode (`hacker-test`)
+#### 1. 🌐 Website URL Loophole & Security Auditor (`analyse-url`)
+Conduct full-spectrum loophole analysis against any website or web application and generate an executive Markdown fix report:
+```bash
+# Analyze a live website URL and generate a comprehensive .md loophole report:
+yemanode analyse-url https://mywebsite.com
+
+# Custom output report path:
+yemanode analyse-url https://mywebsite.com -o ./WEBSITE_AUDIT_REPORT.md
+
+# Export in multiple formats simultaneously (Markdown, JSON, HTML, SARIF):
+yemanode analyse-url https://mywebsite.com -f all
+
+# Fast scan without deep path enumeration:
+yemanode analyse-url https://mywebsite.com --no-deep
+```
+
+#### 2. 🥷 Running Hacker Pentest Mode (`hacker-test`)
 Execute progressive attack testing methods (Levels 1 to 10 max) against any target:
 ```bash
 # Run Level 5 Pentest against a repository:
 yemanode hacker-test ./my-project -H 5
+
 
 # Run Maximum Level 10 Pentest against an API endpoint:
 yemanode hacker-test https://api.example.com -H 10
@@ -133,7 +169,7 @@ yemanode hacker-test https://api.example.com -H 10
 yemanode hacker-test ./openapi.yaml -H 7
 ```
 
-#### 2. Scanning a Source Code Folder (`scan-repo`)
+#### 3. Scanning a Source Code Folder (`scan-repo`)
 Point Yemanode to any local project folder:
 ```bash
 yemanode scan-repo /path/to/your/project
@@ -143,30 +179,37 @@ yemanode scan-repo /path/to/your/project
 yemanode scan-repo ./src --diff --diff-base origin/main
 ```
 
-#### 3. Scanning a Live API or OpenAPI Contract (`scan-api`)
+#### 4. Scanning a Live API or OpenAPI Contract (`scan-api`)
 Test a live REST API or OpenAPI contract:
 ```bash
 yemanode scan-api https://api.example.com/prod
 yemanode scan-api -s ./openapi.yaml
 ```
 
-#### 4. Auditing JWT Tokens (`scan-jwt`)
+#### 5. Auditing JWT Tokens (`scan-jwt`)
 Analyze a raw JWT string or token file:
 ```bash
 yemanode scan-jwt "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwicGFzc3dvcmQiOiJzZWNyZXQxMjMifQ."
 ```
 
-#### 5. Scanning an Android APK (`scan-apk`)
+#### 6. Scanning an Android APK (`scan-apk`)
 Analyze an `.apk` file:
 ```bash
 yemanode scan-apk ./myapp.apk
 ```
 
-#### 6. Scanning a Native Desktop Binary (`scan-binary`)
+#### 7. Scanning a Native Desktop Binary (`scan-binary`)
 Analyze a Linux ELF, Windows EXE/DLL, or macOS binary:
 ```bash
 yemanode scan-binary /usr/local/bin/custom_tool
 ```
+
+#### 8. API Load & Rate-Limit Testing (`load-test`)
+Audit API performance, rate limiting, and latency under concurrent load:
+```bash
+yemanode load-test https://api.example.com/items -n 100 -c 10
+```
+
 
 ---
 

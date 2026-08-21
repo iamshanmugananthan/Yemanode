@@ -6,6 +6,7 @@ and Advanced Hacker Pentest Engine (Levels 1 to 10) with multi-format reports (M
 """
 import datetime
 import os
+import re
 import subprocess
 
 import click
@@ -23,7 +24,9 @@ from .scanners import (
     openapi,
     patterns,
     secrets,
+    url_analyzer,
 )
+
 
 
 def _banner():
@@ -84,19 +87,20 @@ def _handle_report_output(base_output, title, target, findings, format_choice="m
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """Yemanode — analyze source, APK, API, JWT, binary, load testing, or Hacker Pentest Mode (Levels 1-10)."""
+    """Yemanode — analyze source, website URLs, APK, API, JWT, binary, load testing, or Hacker Pentest Mode (Levels 1-10)."""
     if ctx.invoked_subcommand is None:
         _banner()
         click.echo("What would you like to scan?\n")
         click.echo("  [1] Local source / project folder")
         click.echo("  [2] Live API URL or OpenAPI / Postman spec")
-        click.echo("  [3] Android APK file")
-        click.echo("  [4] Desktop / native binary (ELF, PE, Mach-O, etc.)")
-        click.echo("  [5] JWT Token / payload analyzer")
-        click.echo("  [6] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)")
-        click.echo("  [7] ⚡ API Load Test & Rate-Limit Audit")
+        click.echo("  [3] 🌐 Website URL Loophole & Security Auditor (analyse-url)")
+        click.echo("  [4] Android APK file")
+        click.echo("  [5] Desktop / native binary (ELF, PE, Mach-O, etc.)")
+        click.echo("  [6] JWT Token / payload analyzer")
+        click.echo("  [7] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)")
+        click.echo("  [8] ⚡ API Load Test & Rate-Limit Audit")
         click.echo("")
-        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5", "6", "7"]), default="1", show_choices=False)
+        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5", "6", "7", "8"]), default="1", show_choices=False)
 
         if choice == "1":
             path = click.prompt("Enter path to the project / source folder")
@@ -108,15 +112,18 @@ def cli(ctx):
             else:
                 ctx.invoke(scan_api_cmd, url=target)
         elif choice == "3":
+            url = click.prompt("Enter website URL to analyse (e.g. https://example.com)")
+            ctx.invoke(analyse_url_cmd, url=url)
+        elif choice == "4":
             path = click.prompt("Enter path to the .apk file")
             ctx.invoke(scan_apk_cmd, apk_path=path)
-        elif choice == "4":
+        elif choice == "5":
             path = click.prompt("Enter path to the binary / executable")
             ctx.invoke(scan_binary_cmd, binary_path=path)
-        elif choice == "5":
+        elif choice == "6":
             token = click.prompt("Enter raw JWT token or path to file containing JWT")
             ctx.invoke(scan_jwt_cmd, token_or_file=token)
-        elif choice == "6":
+        elif choice == "7":
             target = click.prompt("Enter target (repo path, API URL, file, APK, or binary)")
             lvl = click.prompt("Enter Hacker Attack Level (1 to 10, max: 10)", type=int, default=5)
             ctx.invoke(hacker_test_cmd, target=target, level=lvl)
@@ -125,6 +132,7 @@ def cli(ctx):
             n = click.prompt("Total requests to send", type=int, default=100)
             c = click.prompt("Concurrent worker threads", type=int, default=10)
             ctx.invoke(load_test_cmd, url=url, total_requests=n, concurrency=c)
+
 
 
 @cli.command("hacker-test")
@@ -461,6 +469,68 @@ def load_test_cmd(url, total_requests, concurrency, method, custom_headers, data
             output, f"API Load & Rate-Limit Report — {url}",
             url, findings, format_choice=report_format
         )
+
+
+@cli.command("analyse-url")
+@click.argument("url", required=False)
+@click.option("-o", "--output", default=None, help="Output report path base")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format (default: md)")
+@click.option("--deep/--no-deep", default=True, help="Conduct deep path enumeration and DOM security audit (default: True)")
+@click.option("--timeout", type=int, default=8, help="HTTP request timeout in seconds (default: 8)")
+def analyse_url_cmd(url, output, report_format, deep, timeout):
+    """🌐 Website URL Loophole & Security Auditor — finds all vulnerabilities, misconfigurations, and generates an actionable fix report in Markdown."""
+    if not url:
+        url = click.prompt("Enter website URL to analyse (e.g. https://example.com)")
+
+    target_url = url_analyzer.normalize_target_url(url)
+    click.secho(f"\n[🌐] Launching Professional Website Loophole Audit against:\n     {target_url}", fg="cyan", bold=True)
+    click.echo(f"[*] Assessment Scope: TLS · Security Headers · Cookies · CORS · HTTP Verbs · Recon Paths · DOM/Secrets · Redirects · Error Leaks")
+    click.echo(f"[*] Deep Audit Mode : {'ENABLED' if deep else 'DISABLED'} | Timeout: {timeout}s")
+    click.echo("[*] Analyzing website security posture ...")
+
+    results = url_analyzer.analyse_url(target_url, deep=deep, timeout=timeout)
+
+    score = results["security_score"]
+    grade = results["security_grade"]
+    desc = results["grade_description"]
+    counts = results["severity_counts"]
+    findings = results["findings"]
+    chains = results.get("vulnerability_chains", [])
+
+    # Color grading
+    grade_color = "green" if grade in ("A+", "A") else ("yellow" if grade == "B" else "red")
+    click.secho(f"\n[+] Audit Complete — Overall Security Grade: {grade} ({score}/100)", fg=grade_color, bold=True)
+    click.secho(f"[*] Rating Status: {desc}", fg="bright_black")
+    click.echo(f"[*] Findings Breakdown: {counts['critical']} Critical · {counts['high']} High · {counts['medium']} Medium · {counts['low']} Low · {counts['info']} Info")
+    
+    if chains:
+        click.secho(f"[!] Discovered {len(chains)} high-impact chained attack path(s)!", fg="red", bold=True)
+
+    if not output:
+        clean_name = re.sub(r'[^a-zA-Z0-9]', '_', results['hostname'])
+        output = os.path.join(os.getcwd(), f"WEBSITE_SECURITY_REPORT_{clean_name}_{_timestamp()}")
+
+    md_output = output if output.endswith(".md") else output + ".md"
+    url_analyzer.write_website_markdown_report(md_output, results)
+
+    if report_format == "md":
+        click.secho(f"\n[+] Professional Website Security & Loophole Report written to:\n    {md_output}", fg="cyan", bold=True)
+    else:
+        _handle_report_output(
+            output, f"Website Security Audit — {target_url}",
+            target_url, findings, format_choice=report_format
+        )
+
+
+@cli.command("analyze-url", hidden=True)
+@click.argument("url", required=False)
+@click.option("-o", "--output", default=None, help="Output report path base")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("--deep/--no-deep", default=True, help="Conduct deep path enumeration and DOM audit")
+@click.option("--timeout", type=int, default=8, help="HTTP request timeout in seconds")
+def analyze_url_cmd(url, output, report_format, deep, timeout):
+    """Alias for analyse-url."""
+    return click.get_current_context().invoke(analyse_url_cmd, url=url, output=output, report_format=report_format, deep=deep, timeout=timeout)
 
 
 def main():
