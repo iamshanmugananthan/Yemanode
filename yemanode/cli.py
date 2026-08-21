@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Yemanode v2 – multi-target ethical security scanner.
-Supports: source folders, API URLs / OpenAPI specs, JWT tokens, APK files, and desktop binaries.
+Supports: source folders, API URLs / OpenAPI specs, JWT tokens, APK files, desktop binaries, and Hacker Pentest Mode (Levels 1 to 10).
 """
 import os
 import sys
@@ -13,7 +13,7 @@ import click
 from .detectors import language
 from .scanners import (
     secrets, patterns, dependencies, api_security,
-    apk_scanner, binary_scanner, openapi, jwt_scanner
+    apk_scanner, binary_scanner, openapi, jwt_scanner, hacker_mode
 )
 from . import report
 from . import __version__
@@ -27,7 +27,7 @@ __   _____ __  __    _    _   _  ___  ____  _____
   |_| \___|_|  |_/_/   \_\_| \_|\___/|____/|_____|
 """, fg="cyan")
     click.secho(f"  Multi-target ethical security scanner  v{__version__}\n", fg="cyan")
-    click.secho("  Targets: source folder · API / OpenAPI · JWT · APK · binary\n", fg="bright_black")
+    click.secho("  Targets: source folder · API / OpenAPI · JWT · APK · binary · Hacker Mode (L1-10)\n", fg="bright_black")
 
 
 def _timestamp():
@@ -52,7 +52,7 @@ def _get_git_diff_files(repo_path, base_branch="origin/main"):
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """Yemanode — analyze source, APK, API, JWT, or binary and produce a Markdown fix report."""
+    """Yemanode — analyze source, APK, API, JWT, binary, or run Hacker Pentest Mode (Levels 1-10)."""
     if ctx.invoked_subcommand is None:
         _banner()
         click.echo("What would you like to scan?\n")
@@ -61,8 +61,9 @@ def cli(ctx):
         click.echo("  [3] Android APK file")
         click.echo("  [4] Desktop / native binary (ELF, PE, Mach-O, etc.)")
         click.echo("  [5] JWT Token / payload analyzer")
+        click.echo("  [6] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)")
         click.echo("")
-        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5"]), default="1", show_choices=False)
+        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5", "6"]), default="1", show_choices=False)
 
         if choice == "1":
             path = click.prompt("Enter path to the project / source folder")
@@ -79,9 +80,41 @@ def cli(ctx):
         elif choice == "4":
             path = click.prompt("Enter path to the binary / executable")
             ctx.invoke(scan_binary_cmd, binary_path=path)
-        else:
+        elif choice == "5":
             token = click.prompt("Enter raw JWT token or path to file containing JWT")
             ctx.invoke(scan_jwt_cmd, token_or_file=token)
+        else:
+            target = click.prompt("Enter target (repo path, API URL, file, APK, or binary)")
+            lvl = click.prompt("Enter Hacker Attack Level (1 to 10, max: 10)", type=int, default=5)
+            ctx.invoke(hacker_test_cmd, target=target, level=lvl)
+
+
+@cli.command("hacker-test")
+@click.argument("target", required=False)
+@click.option("-H", "--level", type=int, default=5, help="Hacker Pentest Level (1 to 10 max methods)")
+@click.option("-o", "--output", default=None, help="Output Markdown report path")
+def hacker_test_cmd(target, level, output):
+    """🥷 Hacker Pentest Mode — runs progressive security attack methods (Levels 1 to 10) against target."""
+    if not target:
+        target = click.prompt("Enter target (repo path, API URL, spec file, APK, or binary)")
+
+    if level < 1 or level > hacker_mode.MAX_HACKER_LEVEL:
+        click.secho(f"Warning: Hacker Level must be between 1 and {hacker_mode.MAX_HACKER_LEVEL}. Capping level.", fg="yellow")
+        level = max(1, min(level, hacker_mode.MAX_HACKER_LEVEL))
+
+    click.secho(f"\n[🥷] Launching Hacker Pentest Mode — Level {level}/{hacker_mode.MAX_HACKER_LEVEL}", fg="magenta", bold=True)
+    click.echo(f"[*] Target: {target}")
+
+    results = hacker_mode.run_hacker_test(target, level=level)
+
+    click.secho(f"[*] Completed {len(results['executed_methods'])} progressive pentest method(s).", fg="cyan")
+    click.secho(f"[*] Scan complete — {len(results['findings'])} vulnerability finding(s).", fg="green")
+
+    if not output:
+        output = os.path.join(os.getcwd(), f"HACKER_PENTEST_REPORT_L{level}_{_timestamp()}.md")
+
+    hacker_mode.write_hacker_report(output, results)
+    click.secho(f"\n[+] Executive Hacker Pentest Report written to:\n    {output}", fg="cyan")
 
 
 @cli.command("scan-repo")
@@ -89,8 +122,12 @@ def cli(ctx):
 @click.option("-o", "--output", default=None, help="Output Markdown report path")
 @click.option("--diff", is_flag=True, default=False, help="Scope scan to git diff changes only")
 @click.option("--diff-base", default="origin/main", help="Base branch for git diff scoping (default: origin/main)")
-def scan_repo_cmd(repo_path, output, diff, diff_base):
-    """Deep static analysis of a local source repository / folder (with optional PR diff scoping)."""
+@click.option("-H", "--hacker-level", type=int, default=None, help="Trigger Hacker Pentest Mode (Level 1-10)")
+def scan_repo_cmd(repo_path, output, diff, diff_base, hacker_level):
+    """Deep static analysis of a local source repository / folder (with optional PR diff scoping or Hacker Mode)."""
+    if hacker_level is not None:
+        return click.get_current_context().invoke(hacker_test_cmd, target=repo_path, level=hacker_level, output=output)
+
     if not repo_path:
         repo_path = click.prompt("Enter the path to your repository folder")
     repo_path = os.path.abspath(os.path.expanduser(repo_path))
@@ -139,7 +176,6 @@ def scan_repo_cmd(repo_path, output, diff, diff_base):
     if not output:
         output = os.path.join(repo_path, f"SECURITY_REPORT_{_timestamp()}.md")
 
-    all_code_findings = secret_findings + pattern_findings + jwt_findings
     report.write_code_report(
         output, repo_path, langs, project_type,
         secret_findings, pattern_findings + jwt_findings, dep_findings,
@@ -151,8 +187,13 @@ def scan_repo_cmd(repo_path, output, diff, diff_base):
 @click.argument("url", required=False)
 @click.option("-s", "--spec", default=None, help="Path to OpenAPI/Swagger (.yaml/.json) or Postman collection file")
 @click.option("-o", "--output", default=None, help="Output Markdown report path")
-def scan_api_cmd(url, spec, output):
+@click.option("-H", "--hacker-level", type=int, default=None, help="Trigger Hacker Pentest Mode (Level 1-10)")
+def scan_api_cmd(url, spec, output, hacker_level):
     """Passive security checks against a live API URL or OpenAPI / Postman specification."""
+    if hacker_level is not None:
+        target = spec or url
+        return click.get_current_context().invoke(hacker_test_cmd, target=target, level=hacker_level, output=output)
+
     spec_findings = []
     if spec:
         spec_path = os.path.abspath(os.path.expanduser(spec))
