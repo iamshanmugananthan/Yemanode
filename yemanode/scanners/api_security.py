@@ -1,46 +1,41 @@
 """
 Passive / non-destructive security checks against a live HTTP(S) endpoint.
-Designed with AWS API Gateway in mind, but works for any REST URL.
-Does NOT send exploit payloads, fuzz, or attempt brute-force / auth bypass.
+Designed for AWS API Gateway, Kong, Apigee, Express, Spring, and REST endpoints.
+Audits TLS, security headers, CORS, rate limits, sensitive paths, error stack traces, and shadow endpoints.
 """
-import ssl
-import socket
 import ipaddress
+import socket
+import ssl
 from urllib.parse import urlparse
 
 import requests
 
-TIMEOUT = 5
+TIMEOUT = 6
 
 SECURITY_HEADERS = {
     "Strict-Transport-Security": (
-        "medium",
-        "Add `Strict-Transport-Security: max-age=31536000; includeSubDomains` "
-        "(via API Gateway response headers / CloudFront / reverse proxy) to force HTTPS."
+        "medium", "CWE-319", "API2:2023-Broken Authentication", 6.5,
+        "Add `Strict-Transport-Security: max-age=31536000; includeSubDomains` to force modern HTTPS."
     ),
     "X-Content-Type-Options": (
-        "low",
-        "Add `X-Content-Type-Options: nosniff` to prevent MIME-sniffing."
+        "low", "CWE-693", "API7:2023-Security Misconfiguration", 3.7,
+        "Add `X-Content-Type-Options: nosniff` to prevent MIME-sniffing and content confusion attacks."
     ),
     "Content-Security-Policy": (
-        "low",
-        "If the endpoint can return HTML/JS, add a restrictive Content-Security-Policy."
+        "low", "CWE-79", "API7:2023-Security Misconfiguration", 3.7,
+        "If the endpoint can return HTML/JSON error pages, add a restrictive Content-Security-Policy."
     ),
     "X-Frame-Options": (
-        "low",
-        "Add `X-Frame-Options: DENY` or CSP `frame-ancestors` to prevent clickjacking."
+        "low", "CWE-1021", "API7:2023-Security Misconfiguration", 3.7,
+        "Add `X-Frame-Options: DENY` to prevent clickjacking and UI redressing."
     ),
     "Referrer-Policy": (
-        "low",
-        "Add `Referrer-Policy: strict-origin-when-cross-origin` (or stricter) to limit referrer leakage."
-    ),
-    "Permissions-Policy": (
-        "low",
-        "Consider a Permissions-Policy header to disable unused browser features."
+        "low", "CWE-200", "API7:2023-Security Misconfiguration", 3.1,
+        "Add `Referrer-Policy: strict-origin-when-cross-origin` to limit sensitive URI parameter leakage."
     ),
     "Cache-Control": (
-        "info",
-        "For sensitive API responses prefer `Cache-Control: no-store` to avoid caching credentials/PII."
+        "info", "CWE-524", "API7:2023-Security Misconfiguration", 0.0,
+        "For sensitive API responses, return `Cache-Control: no-store` to prevent caching tokens or PII."
     ),
 }
 
@@ -68,12 +63,8 @@ def _is_private_or_loopback_host(hostname: str) -> bool:
 
 def _get(url, verify=True, **kwargs):
     try:
-        parsed = urlparse(url)
-        if _is_private_or_loopback_host(parsed.hostname):
-            pass
         return requests.get(url, timeout=TIMEOUT, allow_redirects=True, verify=verify, **kwargs)
     except requests.exceptions.SSLError as e:
-        # Fallback with unverified attempt so security checks can complete
         try:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -91,11 +82,14 @@ def check_tls(url):
     parsed = urlparse(url)
     if parsed.scheme != "https":
         findings.append({
-            "type": "Endpoint not using HTTPS",
+            "type": "[API Transport] Plain HTTP Scheme in Use",
             "severity": "critical",
             "target": url,
-            "detail": "The URL uses plain HTTP.",
-            "fix": "Serve exclusively over HTTPS. Redirect HTTP→HTTPS and disable HTTP listeners.",
+            "cwe": "CWE-319",
+            "owasp": "API2:2023-Broken Authentication",
+            "cvss": 9.1,
+            "detail": "API endpoint uses unencrypted HTTP.",
+            "fix": "Enforce HTTPS exclusively across all API Gateway listeners and redirect HTTP to HTTPS.",
         })
         return findings
 
@@ -108,19 +102,25 @@ def check_tls(url):
                 version = ssock.version()
                 if version in ("TLSv1", "TLSv1.1"):
                     findings.append({
-                        "type": f"Outdated TLS version negotiated ({version})",
+                        "type": f"[API Transport] Deprecated TLS Version ({version})",
                         "severity": "high",
                         "target": url,
-                        "detail": f"Server negotiated {version}.",
-                        "fix": "Enforce TLS 1.2 minimum (preferably TLS 1.3 only) on the gateway / load balancer.",
+                        "cwe": "CWE-326",
+                        "owasp": "API7:2023-Security Misconfiguration",
+                        "cvss": 7.5,
+                        "detail": f"Server negotiated deprecated {version}.",
+                        "fix": "Disable TLS 1.0 and 1.1 on the load balancer or API Gateway; enforce TLS 1.2 or TLS 1.3.",
                     })
     except ssl.SSLCertVerificationError as e:
         findings.append({
-            "type": "TLS certificate verification failed",
+            "type": "[API Transport] TLS Certificate Verification Failed",
             "severity": "critical",
             "target": url,
+            "cwe": "CWE-295",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 9.1,
             "detail": str(e),
-            "fix": "Present a valid, non-expired certificate from a trusted CA covering the hostname.",
+            "fix": "Install a valid, non-expired SSL/TLS certificate from a trusted Certificate Authority.",
         })
     except Exception:
         pass
@@ -132,41 +132,69 @@ def check_security_headers(url):
     resp = _get(url)
     if isinstance(resp, Exception):
         return [{
-            "type": "Endpoint unreachable",
+            "type": "[API Connectivity] Endpoint Unreachable",
             "severity": "info",
             "target": url,
+            "cwe": "CWE-200",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 0.0,
             "detail": str(resp),
-            "fix": "Confirm the URL, stage name, and network access before re-scanning.",
+            "fix": "Confirm network connectivity, DNS resolution, and security group firewall rules.",
         }]
 
     if getattr(resp, "_ssl_error", None):
         findings.append({
-            "type": "TLS / SSL Verification Error encountered during probe",
+            "type": "[API Transport] TLS Certificate Trust Warning",
             "severity": "high",
             "target": url,
+            "cwe": "CWE-295",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 7.5,
             "detail": resp._ssl_error,
-            "fix": "Fix TLS certificate trust issue or intermediate chain configuration.",
+            "fix": "Fix TLS certificate chain or renew expired certificates.",
         })
 
-    for header, (severity, fix) in SECURITY_HEADERS.items():
+    for header, (severity, cwe, owasp, cvss, fix) in SECURITY_HEADERS.items():
         if header not in resp.headers:
             findings.append({
-                "type": f"Missing security header: {header}",
+                "type": f"[API Header] Missing Security Header: {header}",
                 "severity": severity,
                 "target": url,
-                "detail": f"Response did not include a {header} header.",
+                "cwe": cwe,
+                "owasp": owasp,
+                "cvss": cvss,
+                "detail": f"Response headers did not include '{header}'.",
                 "fix": fix,
             })
 
+    # Verbose server header
     server_header = resp.headers.get("Server") or resp.headers.get("X-Powered-By")
     if server_header:
         findings.append({
-            "type": "Verbose server / technology header",
+            "type": "[API Information Disclosure] Verbose Server / Framework Header",
             "severity": "low",
             "target": url,
-            "detail": f"Server exposes: {server_header}",
-            "fix": "Strip or genericize Server / X-Powered-By headers at the gateway or CDN.",
+            "cwe": "CWE-200",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 3.1,
+            "detail": f"Header reveals technology banner: {server_header}",
+            "fix": "Remove or genericize 'Server' and 'X-Powered-By' headers at the reverse proxy or API gateway.",
         })
+
+    # Rate Limiting Header Check
+    rate_headers = [h for h in resp.headers if "ratelimit" in h.lower() or "retry-after" in h.lower()]
+    if not rate_headers:
+        findings.append({
+            "type": "[API Rate Limiting] Missing Standard Rate Limiting Headers",
+            "severity": "low",
+            "target": url,
+            "cwe": "CWE-799",
+            "owasp": "API4:2023-Unrestricted Resource Consumption",
+            "cvss": 3.7,
+            "detail": "No 'RateLimit-*' or 'X-RateLimit-*' throttling headers detected in response.",
+            "fix": "Configure API Gateway usage plans, throttling limits, and burst quotas to prevent DoS.",
+        })
+
     return findings
 
 
@@ -178,28 +206,34 @@ def check_auth_enforcement(url):
 
     if resp.status_code == 200 and len(resp.content) > 0:
         findings.append({
-            "type": "Endpoint accessible without authentication",
+            "type": "[API Access Control] Endpoint Publicly Accessible Without Authentication",
             "severity": "high",
             "target": url,
-            "detail": f"Unauthenticated GET returned HTTP 200 with {len(resp.content)} bytes.",
-            "fix": ("If this endpoint should require auth, attach an authorizer (Cognito, Lambda, "
-                   "IAM, API key) in API Gateway / your gateway and deny anonymous access."),
+            "cwe": "CWE-306",
+            "owasp": "API2:2023-Broken Authentication",
+            "cvss": 7.5,
+            "detail": f"Unauthenticated request returned HTTP 200 with {len(resp.content)} bytes.",
+            "fix": "If this endpoint should be private, attach an authorizer (JWT, OAuth, API Key, Cognito) and deny anonymous requests.",
         })
 
-    if resp.status_code >= 500 or (resp.status_code >= 400 and len(resp.content) > 80):
+    # Error stack trace analysis
+    if resp.status_code >= 400:
         body_preview = resp.text[:400]
         leak_markers = (
-            "Traceback", "at java.", "stack trace", "Exception in thread",
-            "SQLSTATE", "ORA-", "django.", "System.Exception", "NullPointerException",
-            "System.NullReferenceException", "ActiveRecord::", "PG::", "Sequelize",
+            "Traceback (most recent call last)", "at java.", "stack trace", "Exception in thread",
+            "SQLSTATE", "ORA-", "django.core.exceptions", "System.Exception", "NullPointerException",
+            "PG::Error", "SequelizeDatabaseError", "UnhandledPromiseRejectionWarning",
         )
         if any(m in body_preview for m in leak_markers):
             findings.append({
-                "type": "Verbose error / stack-trace leakage",
+                "type": "[API Error Handling] Verbose Stack Trace / Internal Details Leaked",
                 "severity": "medium",
                 "target": url,
-                "detail": "Error response body appears to contain stack traces or internal details.",
-                "fix": "Return generic error messages to clients; log details only server-side.",
+                "cwe": "CWE-209",
+                "owasp": "API7:2023-Security Misconfiguration",
+                "cvss": 5.3,
+                "detail": "Response contains raw internal exception stack traces.",
+                "fix": "Catch exceptions globally and return standardized, sanitized error payloads (e.g. RFC 7807 Problem Details).",
             })
     return findings
 
@@ -219,27 +253,36 @@ def check_cors(url):
     acac = resp.headers.get("Access-Control-Allow-Credentials")
     if acao == "*" and acac and acac.lower() == "true":
         findings.append({
-            "type": "Dangerous CORS configuration (wildcard + credentials)",
+            "type": "[API CORS] Critical Misconfiguration: Wildcard Origin with Credentials",
             "severity": "critical",
             "target": url,
-            "detail": "Access-Control-Allow-Origin: * combined with Allow-Credentials: true.",
-            "fix": "Never combine wildcard origin with credentials. Return a specific allow-listed origin.",
+            "cwe": "CWE-942",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 9.3,
+            "detail": "Access-Control-Allow-Origin: * combined with Access-Control-Allow-Credentials: true.",
+            "fix": "Never return wildcard origin when credentials are supported. Enforce a strict allow-list of trusted origins.",
         })
     elif acao == "*":
         findings.append({
-            "type": "Wildcard CORS origin",
+            "type": "[API CORS] Wildcard Origin Allowed (*)",
             "severity": "low",
             "target": url,
-            "detail": "Access-Control-Allow-Origin: * reflects any origin.",
-            "fix": "Restrict Access-Control-Allow-Origin to known frontend origins if the API is not public.",
+            "cwe": "CWE-942",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 3.7,
+            "detail": "Access-Control-Allow-Origin: * allows any web page to read response data.",
+            "fix": "Restrict Access-Control-Allow-Origin to authorized frontend domains.",
         })
     elif acao and acao == "https://evil-attacker-test.invalid":
         findings.append({
-            "type": "CORS reflects arbitrary Origin header",
+            "type": "[API CORS] Arbitrary Origin Header Reflection",
             "severity": "medium",
+            "cwe": "CWE-942",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 6.5,
             "target": url,
-            "detail": "Server echoed back a non-allow-listed Origin.",
-            "fix": "Validate Origin against a fixed allow-list server-side; do not reflect client Origin blindly.",
+            "detail": "Server echoed unvalidated Origin header back in Access-Control-Allow-Origin.",
+            "fix": "Validate Origin headers against a strict whitelist before echoing.",
         })
     return findings
 
@@ -257,35 +300,51 @@ def check_http_methods(url):
             continue
     if allowed:
         findings.append({
-            "type": "Potentially unnecessary HTTP methods enabled",
+            "type": "[API HTTP Verbs] Dangerous / Potentially Unnecessary HTTP Methods Allowed",
             "severity": "medium",
             "target": url,
-            "detail": f"Methods returned non-error status: {allowed}",
-            "fix": "Only enable the HTTP methods actually required. Block TRACE/CONNECT and unused verbs at the gateway.",
+            "cwe": "CWE-650",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 5.3,
+            "detail": f"Non-standard HTTP verbs returned active statuses: {allowed}",
+            "fix": "Disable unused HTTP methods (especially TRACE/CONNECT) at the API gateway level.",
         })
     return findings
 
 
 def check_information_disclosure(url):
-    """Look for common sensitive paths that might be accidentally exposed (passive HEAD/GET)."""
+    """Probes for exposed configuration, actuator, swagger, shadow routes, and metrics."""
     findings = []
     candidates = [
-        "/.env", "/.git/HEAD", "/swagger.json", "/openapi.json", "/api-docs",
-        "/graphql", "/actuator", "/actuator/health", "/health", "/metrics",
-        "/debug", "/server-status", "/phpinfo.php",
+        ("/.env", "Environment Variables File", "critical", "CWE-798", 9.8),
+        ("/.git/HEAD", "Exposed Git Repository", "critical", "CWE-200", 8.6),
+        ("/actuator", "Spring Boot Actuator Root", "high", "CWE-200", 7.5),
+        ("/actuator/env", "Spring Boot Environment Endpoint", "critical", "CWE-798", 9.8),
+        ("/actuator/health", "Health Check Endpoint", "info", "CWE-200", 0.0),
+        ("/swagger.json", "Swagger API Specification", "low", "CWE-200", 3.7),
+        ("/openapi.json", "OpenAPI API Specification", "low", "CWE-200", 3.7),
+        ("/metrics", "Prometheus / System Metrics", "low", "CWE-200", 3.7),
+        ("/debug", "Debug Interface", "medium", "CWE-489", 6.5),
+        ("/server-status", "Apache Server Status", "medium", "CWE-200", 5.3),
+        ("/phpinfo.php", "PHP Info Page", "medium", "CWE-200", 5.3),
+        ("/v1", "Legacy / Shadow API Version 1", "info", "CWE-200", 0.0),
+        ("/api/v1", "API Version 1 Endpoint", "info", "CWE-200", 0.0),
     ]
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    for path in candidates:
+    for path, title, severity, cwe, cvss in candidates:
         try:
-            r = requests.head(base + path, timeout=5, allow_redirects=False, verify=False)
+            r = requests.head(base + path, timeout=4, allow_redirects=False, verify=False)
             if r.status_code == 200:
                 findings.append({
-                    "type": f"Potentially sensitive path accessible: {path}",
-                    "severity": "medium",
+                    "type": f"[API Endpoint Discovery] {title} Accessible ({path})",
+                    "severity": severity,
                     "target": base + path,
-                    "detail": f"HEAD {path} returned 200.",
-                    "fix": f"Ensure {path} is not publicly reachable in production, or requires strong authentication.",
+                    "cwe": cwe,
+                    "owasp": "API7:2023-Security Misconfiguration",
+                    "cvss": cvss,
+                    "detail": f"Path '{path}' returned HTTP 200 OK.",
+                    "fix": f"Restrict public access to '{path}' in production environments.",
                 })
         except requests.RequestException:
             continue
@@ -297,11 +356,14 @@ def run_all(url):
     parsed = urlparse(url)
     if _is_private_or_loopback_host(parsed.hostname):
         findings.append({
-            "type": "Target is on a Private / Loopback Network (SSRF Warning)",
+            "type": "[API Network Boundary] Target Resolves to Private / Loopback IP (SSRF Guard)",
             "severity": "medium",
             "target": url,
-            "detail": f"Target host '{parsed.hostname}' resolves to a local/private IP address space.",
-            "fix": "Ensure scanning private or loopback resources is intended and authorized.",
+            "cwe": "CWE-918",
+            "owasp": "API7:2023-Security Misconfiguration",
+            "cvss": 5.3,
+            "detail": f"Target host '{parsed.hostname}' resolves to private/internal IP space.",
+            "fix": "Verify that scanning internal/private resources is authorized and intentional.",
         })
     findings += check_tls(url)
     findings += check_security_headers(url)

@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """
 Yemanode v2 – multi-target ethical security scanner.
-Supports: source folders, API URLs / OpenAPI specs, JWT tokens, APK files, desktop binaries, and Hacker Pentest Mode (Levels 1 to 10).
+Supports: source folders, API URLs / OpenAPI specs, JWT tokens, APK files, desktop binaries,
+and Advanced Hacker Pentest Engine (Levels 1 to 10) with multi-format reports (MD, JSON, HTML, SARIF).
 """
-import os
-import sys
 import datetime
+import os
 import subprocess
 
 import click
 
+from . import __version__, report
 from .detectors import language
 from .scanners import (
-    secrets, patterns, dependencies, api_security,
-    apk_scanner, binary_scanner, openapi, jwt_scanner, hacker_mode
+    api_security,
+    apk_scanner,
+    binary_scanner,
+    dependencies,
+    hacker_mode,
+    jwt_scanner,
+    load_test,
+    openapi,
+    patterns,
+    secrets,
 )
-from . import report
-from . import __version__
 
 
 def _banner():
@@ -27,7 +34,7 @@ __   _____ __  __    _    _   _  ___  ____  _____
   |_| \___|_|  |_/_/   \_\_| \_|\___/|____/|_____|
 """, fg="cyan")
     click.secho(f"  Multi-target ethical security scanner  v{__version__}\n", fg="cyan")
-    click.secho("  Targets: source folder · API / OpenAPI · JWT · APK · binary · Hacker Mode (L1-10)\n", fg="bright_black")
+    click.secho("  Targets: source folder · API / OpenAPI · JWT · APK · binary · Hacker Mode (L1-10) · Load Testing\n", fg="bright_black")
 
 
 def _timestamp():
@@ -49,10 +56,35 @@ def _get_git_diff_files(repo_path, base_branch="origin/main"):
     return None
 
 
+def _handle_report_output(base_output, title, target, findings, format_choice="md", extra_notes=None):
+    base_no_ext = os.path.splitext(base_output)[0]
+    formats_to_write = ["md", "json", "html", "sarif"] if format_choice == "all" else [format_choice]
+
+    click.echo("")
+    for fmt in formats_to_write:
+        fmt = fmt.lower().strip()
+        if fmt == "md" or fmt == "markdown":
+            out_file = base_no_ext + ".md"
+            report.write_generic_report(out_file, title, target, findings, extra_notes=extra_notes)
+            click.secho(f"[+] Markdown Report : {out_file}", fg="cyan")
+        elif fmt == "json":
+            out_file = base_no_ext + ".json"
+            report.write_json_report(out_file, title, target, findings)
+            click.secho(f"[+] JSON Report     : {out_file}", fg="cyan")
+        elif fmt == "html":
+            out_file = base_no_ext + ".html"
+            report.write_html_report(out_file, title, target, findings)
+            click.secho(f"[+] HTML Report     : {out_file}", fg="cyan")
+        elif fmt == "sarif":
+            out_file = base_no_ext + ".sarif"
+            report.write_sarif_report(out_file, title, target, findings)
+            click.secho(f"[+] SARIF 2.1 Report: {out_file}", fg="cyan")
+
+
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """Yemanode — analyze source, APK, API, JWT, binary, or run Hacker Pentest Mode (Levels 1-10)."""
+    """Yemanode — analyze source, APK, API, JWT, binary, load testing, or Hacker Pentest Mode (Levels 1-10)."""
     if ctx.invoked_subcommand is None:
         _banner()
         click.echo("What would you like to scan?\n")
@@ -62,8 +94,9 @@ def cli(ctx):
         click.echo("  [4] Desktop / native binary (ELF, PE, Mach-O, etc.)")
         click.echo("  [5] JWT Token / payload analyzer")
         click.echo("  [6] 🥷 Hacker Pentest Mode (Progressive Attack Levels 1 to 10)")
+        click.echo("  [7] ⚡ API Load Test & Rate-Limit Audit")
         click.echo("")
-        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5", "6"]), default="1", show_choices=False)
+        choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5", "6", "7"]), default="1", show_choices=False)
 
         if choice == "1":
             path = click.prompt("Enter path to the project / source folder")
@@ -83,17 +116,24 @@ def cli(ctx):
         elif choice == "5":
             token = click.prompt("Enter raw JWT token or path to file containing JWT")
             ctx.invoke(scan_jwt_cmd, token_or_file=token)
-        else:
+        elif choice == "6":
             target = click.prompt("Enter target (repo path, API URL, file, APK, or binary)")
             lvl = click.prompt("Enter Hacker Attack Level (1 to 10, max: 10)", type=int, default=5)
             ctx.invoke(hacker_test_cmd, target=target, level=lvl)
+        else:
+            url = click.prompt("Enter API target URL")
+            n = click.prompt("Total requests to send", type=int, default=100)
+            c = click.prompt("Concurrent worker threads", type=int, default=10)
+            ctx.invoke(load_test_cmd, url=url, total_requests=n, concurrency=c)
 
 
 @cli.command("hacker-test")
 @click.argument("target", required=False)
 @click.option("-H", "--level", type=int, default=5, help="Hacker Pentest Level (1 to 10 max methods)")
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
-def hacker_test_cmd(target, level, output):
+@click.option("-m", "--mode", type=click.Choice(["safe", "aggressive"]), default="safe", help="Pentest mode (safe/aggressive)")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path base")
+def hacker_test_cmd(target, level, mode, report_format, output):
     """🥷 Hacker Pentest Mode — runs progressive security attack methods (Levels 1 to 10) against target."""
     if not target:
         target = click.prompt("Enter target (repo path, API URL, spec file, APK, or binary)")
@@ -102,31 +142,42 @@ def hacker_test_cmd(target, level, output):
         click.secho(f"Warning: Hacker Level must be between 1 and {hacker_mode.MAX_HACKER_LEVEL}. Capping level.", fg="yellow")
         level = max(1, min(level, hacker_mode.MAX_HACKER_LEVEL))
 
-    click.secho(f"\n[🥷] Launching Hacker Pentest Mode — Level {level}/{hacker_mode.MAX_HACKER_LEVEL}", fg="magenta", bold=True)
+    click.secho(f"\n[🥷] Launching Hacker Pentest Mode — Level {level}/{hacker_mode.MAX_HACKER_LEVEL} (Mode: {mode.upper()})", fg="magenta", bold=True)
     click.echo(f"[*] Target: {target}")
 
-    results = hacker_mode.run_hacker_test(target, level=level)
+    results = hacker_mode.run_hacker_test(target, level=level, mode=mode)
 
     click.secho(f"[*] Completed {len(results['executed_methods'])} progressive pentest method(s).", fg="cyan")
     click.secho(f"[*] Scan complete — {len(results['findings'])} vulnerability finding(s).", fg="green")
+    if results.get("vulnerability_chains"):
+        click.secho(f"[!] Discovered {len(results['vulnerability_chains'])} exploitable vulnerability chain(s)!", fg="red", bold=True)
 
     if not output:
-        output = os.path.join(os.getcwd(), f"HACKER_PENTEST_REPORT_L{level}_{_timestamp()}.md")
+        output = os.path.join(os.getcwd(), f"HACKER_PENTEST_REPORT_L{level}_{_timestamp()}")
 
-    hacker_mode.write_hacker_report(output, results)
-    click.secho(f"\n[+] Executive Hacker Pentest Report written to:\n    {output}", fg="cyan")
+    # Generate Markdown Hacker Report
+    md_output = output if output.endswith(".md") else output + ".md"
+    hacker_mode.write_hacker_report(md_output, results)
+
+    # Multi-format reporting if requested
+    if report_format != "md":
+        _handle_report_output(output, f"Hacker Pentest Report L{level}", target, results["findings"], format_choice=report_format)
+    else:
+        click.secho(f"\n[+] Executive Hacker Pentest Report written to:\n    {md_output}", fg="cyan")
 
 
 @cli.command("scan-repo")
 @click.argument("repo_path", required=False)
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
+@click.option("-o", "--output", default=None, help="Output report path")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
 @click.option("--diff", is_flag=True, default=False, help="Scope scan to git diff changes only")
 @click.option("--diff-base", default="origin/main", help="Base branch for git diff scoping (default: origin/main)")
+@click.option("--git-history/--no-git-history", default=True, help="Scan Git commit history for leaked secrets")
 @click.option("-H", "--hacker-level", type=int, default=None, help="Trigger Hacker Pentest Mode (Level 1-10)")
-def scan_repo_cmd(repo_path, output, diff, diff_base, hacker_level):
+def scan_repo_cmd(repo_path, output, report_format, diff, diff_base, git_history, hacker_level):
     """Deep static analysis of a local source repository / folder (with optional PR diff scoping or Hacker Mode)."""
     if hacker_level is not None:
-        return click.get_current_context().invoke(hacker_test_cmd, target=repo_path, level=hacker_level, output=output)
+        return click.get_current_context().invoke(hacker_test_cmd, target=repo_path, level=hacker_level, output=output, report_format=report_format)
 
     if not repo_path:
         repo_path = click.prompt("Enter the path to your repository folder")
@@ -156,10 +207,13 @@ def scan_repo_cmd(repo_path, output, diff, diff_base, hacker_level):
     click.echo(f"[*] Files scanned  : {len(all_files)}")
     click.echo(f"[*] Manifests found: {len(manifests)}")
 
-    click.echo("[*] Checking for hardcoded secrets / credentials ...")
+    click.echo("[*] Checking for hardcoded secrets / credentials / sensitive files ...")
     secret_findings = secrets.scan_files(all_files)
+    if git_history and not diff:
+        click.echo("[*] Mining Git commit logs for historical secrets ...")
+        secret_findings.extend(secrets.scan_git_history(repo_path, max_commits=50))
 
-    click.echo("[*] Checking for insecure code patterns (injection, XSS, SSRF, SSTI, crypto, config) ...")
+    click.echo("[*] Checking for insecure code patterns (SQLi, NoSQLi, RCE, SSRF, XSS, Path Traversal, IaC) ...")
     pattern_findings = patterns.scan_files(all_files)
 
     click.echo("[*] Checking for embedded JWT tokens and claims ...")
@@ -170,29 +224,37 @@ def scan_repo_cmd(repo_path, output, diff, diff_base, hacker_level):
     click.echo("[*] Checking dependency manifests for known-vulnerable packages ...")
     dep_findings = dependencies.check_manifests(manifests)
 
-    total = len(secret_findings) + len(pattern_findings) + len(jwt_findings) + len(dep_findings)
-    click.secho(f"[*] Scan complete — {total} finding(s).", fg="green")
+    all_findings = secret_findings + pattern_findings + jwt_findings + dep_findings
+    click.secho(f"[*] Scan complete — {len(all_findings)} finding(s).", fg="green")
 
     if not output:
-        output = os.path.join(repo_path, f"SECURITY_REPORT_{_timestamp()}.md")
+        output = os.path.join(repo_path, f"SECURITY_REPORT_{_timestamp()}")
 
-    report.write_code_report(
-        output, repo_path, langs, project_type,
-        secret_findings, pattern_findings + jwt_findings, dep_findings,
-    )
-    click.secho(f"\n[+] Full Markdown report written to:\n    {output}", fg="cyan")
+    if report_format == "md":
+        md_file = output if output.endswith(".md") else output + ".md"
+        report.write_code_report(
+            md_file, repo_path, langs, project_type,
+            secret_findings, pattern_findings + jwt_findings, dep_findings,
+        )
+        click.secho(f"\n[+] Full Markdown report written to:\n    {md_file}", fg="cyan")
+    else:
+        _handle_report_output(
+            output, f"Security Audit — {os.path.basename(repo_path)}",
+            repo_path, all_findings, format_choice=report_format
+        )
 
 
 @cli.command("scan-api")
 @click.argument("url", required=False)
 @click.option("-s", "--spec", default=None, help="Path to OpenAPI/Swagger (.yaml/.json) or Postman collection file")
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path")
 @click.option("-H", "--hacker-level", type=int, default=None, help="Trigger Hacker Pentest Mode (Level 1-10)")
-def scan_api_cmd(url, spec, output, hacker_level):
+def scan_api_cmd(url, spec, report_format, output, hacker_level):
     """Passive security checks against a live API URL or OpenAPI / Postman specification."""
     if hacker_level is not None:
         target = spec or url
-        return click.get_current_context().invoke(hacker_test_cmd, target=target, level=hacker_level, output=output)
+        return click.get_current_context().invoke(hacker_test_cmd, target=target, level=hacker_level, output=output, report_format=report_format)
 
     spec_findings = []
     if spec:
@@ -202,7 +264,7 @@ def scan_api_cmd(url, spec, output, hacker_level):
         if parsed:
             click.echo(f"[*] API Spec Type : {parsed['spec_type']}")
             click.echo(f"[*] Endpoints     : {len(parsed['endpoints'])}")
-            click.echo("[*] Conducting static security analysis of API contract ...")
+            click.echo("[*] Conducting static security analysis of API contract (Auth, BOLA, sensitive query params) ...")
             spec_findings.extend(openapi.audit_spec_statically(parsed))
 
             if not url and parsed.get("base_url"):
@@ -218,7 +280,7 @@ def scan_api_cmd(url, spec, output, hacker_level):
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         click.secho(f"\n[*] Running passive security checks against:\n    {url}", fg="yellow")
-        click.echo("    (TLS, security headers, auth presence, CORS, HTTP methods, common sensitive paths)")
+        click.echo("    (TLS, security headers, auth presence, CORS, rate limits, HTTP methods, shadow routes)")
         findings = api_security.run_all(url)
     else:
         findings = spec_findings
@@ -226,16 +288,19 @@ def scan_api_cmd(url, spec, output, hacker_level):
     click.secho(f"[*] Scan complete — {len(findings)} finding(s).", fg="green")
 
     if not output:
-        output = os.path.join(os.getcwd(), f"API_SECURITY_REPORT_{_timestamp()}.md")
+        output = os.path.join(os.getcwd(), f"API_SECURITY_REPORT_{_timestamp()}")
 
-    report.write_api_report(output, url or (spec or "API Spec"), findings)
-    click.secho(f"\n[+] Full Markdown report written to:\n    {output}", fg="cyan")
+    _handle_report_output(
+        output, f"API Security Report — {url or spec or 'API'}",
+        url or (spec or "API Spec"), findings, format_choice=report_format
+    )
 
 
 @cli.command("scan-jwt")
 @click.argument("token_or_file", required=False)
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
-def scan_jwt_cmd(token_or_file, output):
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path")
+def scan_jwt_cmd(token_or_file, report_format, output):
     """Decode and analyze JWT tokens for security risks (unsigned tokens, weak alg, expired, sensitive claims)."""
     if not token_or_file:
         token_or_file = click.prompt("Enter raw JWT token or file path containing JWT")
@@ -251,25 +316,24 @@ def scan_jwt_cmd(token_or_file, output):
     click.secho(f"[*] Scan complete — {len(findings)} finding(s).", fg="green")
 
     if not output:
-        output = os.path.join(os.getcwd(), f"JWT_SECURITY_REPORT_{_timestamp()}.md")
+        output = os.path.join(os.getcwd(), f"JWT_SECURITY_REPORT_{_timestamp()}")
 
-    report.write_generic_report(
-        output,
-        title="JWT Security Audit Report",
-        target_desc=token_or_file[:60] + ("..." if len(token_or_file) > 60 else ""),
-        findings=findings,
+    _handle_report_output(
+        output, "JWT Security Audit Report",
+        token_or_file[:60] + ("..." if len(token_or_file) > 60 else ""),
+        findings, format_choice=report_format,
         extra_notes=[
             "JWT signatures were analyzed structurally without verifying secret keys.",
             "Always enforce asymmetric (RS256/ES256) or strong secret verification in API gateways.",
         ],
     )
-    click.secho(f"\n[+] Full Markdown report written to:\n    {output}", fg="cyan")
 
 
 @cli.command("scan-apk")
 @click.argument("apk_path", required=False)
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
-def scan_apk_cmd(apk_path, output):
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path")
+def scan_apk_cmd(apk_path, report_format, output):
     """Static analysis of an Android APK (manifest, secrets, cleartext, exported components, etc.)."""
     if not apk_path:
         apk_path = click.prompt("Enter path to the .apk file")
@@ -282,34 +346,30 @@ def scan_apk_cmd(apk_path, output):
         click.secho("Warning: file does not end with .apk / .aab — continuing anyway.", fg="yellow")
 
     click.secho(f"\n[*] Analyzing APK: {apk_path}", fg="yellow")
-    click.echo("    (string extraction, AndroidManifest flags, secrets, cleartext URLs, insecure modes)")
+    click.echo("    (AndroidManifest flags, dangerous permissions, Firebase DBs, WebViews, secrets, native .so libs)")
 
     findings = apk_scanner.scan_apk(apk_path)
     click.secho(f"[*] Scan complete — {len(findings)} finding(s).", fg="green")
 
     if not output:
-        output = os.path.join(os.getcwd(), f"APK_SECURITY_REPORT_{_timestamp()}.md")
+        output = os.path.join(os.getcwd(), f"APK_SECURITY_REPORT_{_timestamp()}")
 
-    notes = [
-        "This is static analysis only (no dynamic instrumentation or runtime testing).",
-        "For deeper Android analysis consider MobSF, jadx + manual review, or Frida on a test device you own.",
-        "Binary XML (AndroidManifest) is only partially readable without apktool/aapt; some flags may be missed.",
-    ]
-    report.write_generic_report(
-        output,
-        title=f"APK Security Report — `{os.path.basename(apk_path)}`",
-        target_desc=apk_path,
-        findings=findings,
-        extra_notes=notes,
+    _handle_report_output(
+        output, f"APK Security Report — {os.path.basename(apk_path)}",
+        apk_path, findings, format_choice=report_format,
+        extra_notes=[
+            "This is static analysis only (no dynamic instrumentation or runtime testing).",
+            "For deeper Android analysis consider MobSF, jadx + manual review, or Frida on a test device you own.",
+        ],
     )
-    click.secho(f"\n[+] Full Markdown report written to:\n    {output}", fg="cyan")
 
 
 @cli.command("scan-binary")
 @click.argument("binary_path", required=False)
-@click.option("-o", "--output", default=None, help="Output Markdown report path")
-def scan_binary_cmd(binary_path, output):
-    """Static string / pattern analysis of a desktop or native binary."""
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path")
+def scan_binary_cmd(binary_path, report_format, output):
+    """Static analysis of desktop/native binaries (PIE, NX, RELRO, stack canaries, dangerous C functions)."""
     if not binary_path:
         binary_path = click.prompt("Enter path to the binary / executable")
     binary_path = os.path.abspath(os.path.expanduser(binary_path))
@@ -319,27 +379,88 @@ def scan_binary_cmd(binary_path, output):
         return
 
     click.secho(f"\n[*] Analyzing binary: {binary_path}", fg="yellow")
-    click.echo("    (file type, embedded secrets, dangerous C functions, hardcoded credentials)")
+    click.echo("    (file type, security mitigations ASLR/NX/RELRO/Canary, dangerous C functions, embedded secrets)")
 
     findings = binary_scanner.scan_binary(binary_path)
     click.secho(f"[*] Scan complete — {len(findings)} finding(s).", fg="green")
 
     if not output:
-        output = os.path.join(os.getcwd(), f"BINARY_SECURITY_REPORT_{_timestamp()}.md")
+        output = os.path.join(os.getcwd(), f"BINARY_SECURITY_REPORT_{_timestamp()}")
 
-    notes = [
-        "This is a lightweight static string scan — not full reverse engineering or symbolic execution.",
-        "For serious binary auditing use Ghidra, IDA, Binary Ninja, or dedicated tools (e.g. checksec, hardened runtime analysis).",
-        "Packed or heavily obfuscated binaries will yield fewer useful strings.",
-    ]
-    report.write_generic_report(
-        output,
-        title=f"Binary Security Report — `{os.path.basename(binary_path)}`",
-        target_desc=binary_path,
-        findings=findings,
-        extra_notes=notes,
+    _handle_report_output(
+        output, f"Binary Security Report — {os.path.basename(binary_path)}",
+        binary_path, findings, format_choice=report_format,
+        extra_notes=[
+            "This is a lightweight static binary scan auditing ELF mitigations, strings, and symbols.",
+            "For deep reverse engineering, pair with Ghidra, IDA Pro, or Binary Ninja.",
+        ],
     )
-    click.secho(f"\n[+] Full Markdown report written to:\n    {output}", fg="cyan")
+
+
+@cli.command("load-test")
+@click.argument("url", required=False)
+@click.option("-n", "--requests", "total_requests", type=int, default=100, help="Total number of requests (default: 100)")
+@click.option("-c", "--concurrency", type=int, default=10, help="Concurrent worker threads (default: 10)")
+@click.option("-m", "--method", default="GET", help="HTTP method (GET, POST, PUT, DELETE, etc.)")
+@click.option("-H", "--header", "custom_headers", multiple=True, help="Custom HTTP headers in 'Key: Value' format")
+@click.option("-d", "--data", default=None, help="HTTP request body data")
+@click.option("-f", "--format", "report_format", type=click.Choice(["md", "json", "html", "sarif", "all"]), default="md", help="Report export format")
+@click.option("-o", "--output", default=None, help="Output report path")
+def load_test_cmd(url, total_requests, concurrency, method, custom_headers, data, report_format, output):
+    """⚡ Controlled concurrent load testing & API rate-limit resilience audit."""
+    if not url:
+        url = click.prompt("Enter API target URL")
+
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    headers_dict = {}
+    if custom_headers:
+        for h in custom_headers:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                headers_dict[k.strip()] = v.strip()
+
+    click.secho(f"\n[⚡] Starting Load & Rate-Limit Audit against: {url}", fg="yellow", bold=True)
+    click.echo(f"[*] Method: {method.upper()} | Total Requests: {total_requests} | Concurrency: {concurrency} workers")
+    click.echo("[*] Sending concurrent requests ...")
+
+    results = load_test.run_load_test(
+        url=url,
+        method=method,
+        total_requests=total_requests,
+        concurrency=concurrency,
+        headers=headers_dict,
+        data=data,
+    )
+
+    lat = results["latencies"]
+    rps = results["rps"]
+    duration = results["duration_sec"]
+    status_counts = results["status_counts"]
+    findings = results["findings"]
+
+    click.secho(f"\n[+] Test Completed in {duration:.2f}s — Throughput: {rps:.1f} req/sec", fg="green", bold=True)
+    click.echo(f"[*] Latency: Avg={lat['avg_ms']:.1f}ms | P50={lat['median_ms']:.1f}ms | P95={lat['p95_ms']:.1f}ms | Max={lat['max_ms']:.1f}ms")
+    click.echo(f"[*] Response Statuses: {status_counts}")
+    if findings:
+        for f in findings:
+            sev = f.get("severity", "info")
+            click.echo(f"    {report.SEVERITY_ICON.get(sev, '⚪')} [{sev.upper()}] {f['type']}")
+
+    if not output:
+        output = os.path.join(os.getcwd(), f"LOAD_TEST_REPORT_{_timestamp()}")
+
+    md_file = output if output.endswith(".md") else output + ".md"
+    load_test.write_load_test_report(md_file, results)
+
+    if report_format == "md":
+        click.secho(f"\n[+] Full Markdown Report written to:\n    {md_file}", fg="cyan")
+    else:
+        _handle_report_output(
+            output, f"API Load & Rate-Limit Report — {url}",
+            url, findings, format_choice=report_format
+        )
 
 
 def main():
@@ -348,3 +469,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

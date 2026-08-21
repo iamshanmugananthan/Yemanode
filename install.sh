@@ -4,15 +4,6 @@ set -e
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "[*] Cleaning up any legacy CodeSentinel installations..."
-if command -v pipx >/dev/null 2>&1; then
-    pipx uninstall codesentinel >/dev/null 2>&1 || true
-fi
-if command -v pip3 >/dev/null 2>&1; then
-    pip3 uninstall -y codesentinel >/dev/null 2>&1 || true
-fi
-rm -f "$HOME/.local/bin/codesentinel" "$HOME/.local/bin/codeessential"
-
 echo "[*] Installing Yemanode v2 from $SRC_DIR ..."
 
 if command -v pipx >/dev/null 2>&1; then
@@ -38,7 +29,10 @@ echo ""
 echo "[+] Installed! Run it with:  yemanode"
 echo ""
 echo "    Interactive menu:          yemanode"
-echo "    Source folder:             yemanode scan-repo /path/to/project"
-echo "    API URL:                   yemanode scan-api https://...."
-echo "    Android APK:               yemanode scan-apk ./app.apk"
-echo "    Desktop binary:            yemanode scan-binary /path/to/binary"
+echo "    Hacker Pentest Engine:     yemanode hacker-test . -H 10 -f all"
+echo "    Source folder:             yemanode scan-repo /path/to/project -f all"
+echo "    API URL / OpenAPI Spec:    yemanode scan-api https://.... -f all"
+echo "    JWT Token:                 yemanode scan-jwt 'eyJhbGciOi...'"
+echo "    Android APK:               yemanode scan-apk ./app.apk -f all"
+echo "    Desktop binary:            yemanode scan-binary /path/to/binary -f all"
+echo "    Load & Rate Limit Test:    yemanode load-test https://api.example.com -n 100 -c 10"

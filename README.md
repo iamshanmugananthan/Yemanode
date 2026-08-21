@@ -16,6 +16,7 @@ With a single unified CLI, Yemanode performs static security analysis and passiv
 | 🔑 **JWT Security Analyzer** | JWT Tokens / Files | `yemanode scan-jwt` | Decodes JWT header/payload to detect unsigned tokens (`alg: none`), weak HMAC algorithms, expired tokens, and leaked PII claims. |
 | 📱 **Android APK Analyzer** | Android Packages (`.apk`) | `yemanode scan-apk` | Analyzes Manifest security flags, cleartext traffic, embedded secrets, and insecure file modes. |
 | 💻 **Native Binary Scanner** | Executables (`ELF`/`PE`/`Mach-O`) | `yemanode scan-binary` | Extracts strings from native binaries to detect leaked private keys, credentials, and dangerous C functions. |
+| ⚡ **API Load & Rate-Limit Tester** | Live API / Gateway URL | `yemanode load-test` | Performs controlled concurrent load testing to audit rate limiting, throughput (RPS), status distribution, and latency percentiles (P50/P95/P99). |
 
 ---
 

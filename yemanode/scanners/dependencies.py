@@ -44,10 +44,13 @@ def check_python(manifest_path):
         vulns = dep.get("vulns", []) if isinstance(dep, dict) else []
         for v in vulns:
             findings.append({
-                "type": f"Vulnerable dependency: {dep.get('name')} {dep.get('version')}",
+                "type": f"[Vulnerable Dependency] {dep.get('name')} {dep.get('version')}",
                 "severity": "high",
                 "file": manifest_path,
                 "line": 0,
+                "cwe": "CWE-1395",
+                "owasp": "A06:2021-Vulnerable and Outdated Components",
+                "cvss": 7.5,
                 "snippet": v.get("id", "") or str(v)[:120],
                 "fix": f"Upgrade {dep.get('name')} to a patched version (fix versions: "
                        f"{', '.join(v.get('fix_versions', []) or ['see advisory'])}).",
@@ -63,6 +66,8 @@ def check_npm(manifest_path):
             "severity": "info",
             "file": manifest_path,
             "line": 0,
+            "cwe": "CWE-1395",
+            "owasp": "A06:2021-Vulnerable and Outdated Components",
             "snippet": "npm not installed",
             "fix": "Install Node.js/npm and run `npm audit` in the project directory.",
         })
@@ -81,11 +86,15 @@ def check_npm(manifest_path):
         severity = info.get("severity", "medium")
         if severity not in ("critical", "high", "medium", "low", "info"):
             severity = "medium"
+        cvss_map = {"critical": 9.5, "high": 7.5, "medium": 5.5, "low": 3.5, "info": 0.0}
         findings.append({
-            "type": f"Vulnerable dependency: {name}",
+            "type": f"[Vulnerable Dependency] {name}",
             "severity": severity,
             "file": manifest_path,
             "line": 0,
+            "cwe": "CWE-1395",
+            "owasp": "A06:2021-Vulnerable and Outdated Components",
+            "cvss": cvss_map.get(severity, 5.0),
             "snippet": str(info.get("via", ""))[:160],
             "fix": f"Run `npm audit fix` or upgrade `{name}` manually according to the advisory.",
         })
@@ -107,10 +116,12 @@ def check_manifests(manifest_files):
         elif base in ("pom.xml", "build.gradle", "build.gradle.kts", "go.mod",
                       "cargo.toml", "gemfile", "composer.json", "pubspec.yaml"):
             findings.append({
-                "type": f"Manifest detected: {base} (manual check recommended)",
+                "type": f"[Dependency Manifest] {base} detected",
                 "severity": "info",
                 "file": m,
                 "line": 0,
+                "cwe": "CWE-1395",
+                "owasp": "A06:2021-Vulnerable and Outdated Components",
                 "snippet": base,
                 "fix": (f"Run the ecosystem-native audit tool for {base} "
                         "(e.g. `mvn dependency-check`, `./gradlew dependencyCheckAnalyze`, "

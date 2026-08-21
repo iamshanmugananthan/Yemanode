@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 yemanode/__init__.py
@@ -16,5 +17,9 @@ yemanode/scanners/api_security.py
 yemanode/scanners/apk_scanner.py
 yemanode/scanners/binary_scanner.py
 yemanode/scanners/dependencies.py
+yemanode/scanners/hacker_mode.py
+yemanode/scanners/jwt_scanner.py
+yemanode/scanners/load_test.py
+yemanode/scanners/openapi.py
 yemanode/scanners/patterns.py
 yemanode/scanners/secrets.py

@@ -3,5 +3,8 @@ Name: yemanode
 Version: 2.0.0
 Summary: Powerful multi-target ethical security scanner: source code, APK, APIs, and binaries. Generates detailed Markdown fix reports.
 Requires-Python: >=3.8
+License-File: LICENSE
 Requires-Dist: click>=8.0
 Requires-Dist: requests>=2.28
+Requires-Dist: PyYAML>=6.0
+Dynamic: license-file

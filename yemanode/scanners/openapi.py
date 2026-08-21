@@ -4,7 +4,7 @@ Parses API contracts statically and generates targeted passive security probes.
 """
 import json
 import os
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 try:
     import yaml
@@ -144,7 +144,12 @@ def _parse_postman(data, file_path):
 
 def audit_spec_statically(parsed_spec):
     """
-    Performs static security analysis on the API specification itself.
+    Performs static security analysis on the API specification itself:
+    - Missing global/operation authentication
+    - BOLA / IDOR risk patterns on path parameters
+    - Sensitive query parameters (passwords, tokens in URLs)
+    - Unauthenticated state-changing methods (PUT, DELETE, PATCH)
+    - Insecure HTTP schemes
     """
     findings = []
     if not parsed_spec:
@@ -153,42 +158,87 @@ def audit_spec_statically(parsed_spec):
     spec_file = parsed_spec["file_path"]
     endpoints = parsed_spec["endpoints"]
 
-    # Check global security / authentication requirement
+    # 1. Check global security / authentication requirement
     if not parsed_spec["global_security"] and endpoints:
         unauth_count = sum(1 for e in endpoints if not e["authenticated"])
         if unauth_count > 0:
             findings.append({
-                "type": f"[{parsed_spec['spec_type']}] Endpoints Missing Declared Security",
+                "type": f"[{parsed_spec['spec_type']}] Endpoints Missing Declared Security / Auth Schemes",
                 "severity": "high",
                 "file": spec_file,
                 "line": 0,
+                "cwe": "CWE-306",
+                "owasp": "API2:2023-Broken Authentication",
+                "cvss": 7.5,
                 "snippet": f"{unauth_count} of {len(endpoints)} endpoint(s) lack auth declarations.",
-                "fix": "Declare global security requirements or specify security per operation in the OpenAPI spec.",
+                "fix": "Declare global security requirements (OAuth2, Bearer JWT, apiKey) or specify security per operation in the OpenAPI spec.",
             })
 
-    # Check for risky HTTP methods without authentication
+    # 2. Check each endpoint for BOLA/IDOR, state-changing unauth, and sensitive query params
     for e in endpoints:
-        if e["method"] in ("DELETE", "PUT", "PATCH") and not e["authenticated"]:
+        path = e["path"]
+        method = e["method"]
+        is_auth = e["authenticated"]
+
+        # BOLA / IDOR detection (Object-level identifier in path without auth)
+        if ("{" in path or "/:" in path) and not is_auth:
             findings.append({
-                "type": f"[{parsed_spec['spec_type']}] Unauthenticated State-Changing Method ({e['method']} {e['path']})",
+                "type": f"[{parsed_spec['spec_type']}] Potential BOLA / IDOR Risk: Unauthenticated Resource Identifier ({method} {path})",
+                "severity": "critical",
+                "file": spec_file,
+                "line": 0,
+                "cwe": "CWE-284",
+                "owasp": "API1:2023-Broken Object Level Authorization",
+                "cvss": 8.6,
+                "snippet": f"{method} {path}",
+                "fix": "Enforce object-level access controls and require user session validation before returning resource by ID.",
+            })
+
+        # State-changing HTTP methods without authentication
+        if method in ("DELETE", "PUT", "PATCH") and not is_auth:
+            findings.append({
+                "type": f"[{parsed_spec['spec_type']}] Unauthenticated State-Changing Operation ({method} {path})",
                 "severity": "high",
                 "file": spec_file,
                 "line": 0,
-                "snippet": f"{e['method']} {e['path']}",
-                "fix": "Ensure state-changing endpoints (PUT/DELETE/PATCH) require authentication.",
+                "cwe": "CWE-306",
+                "owasp": "API2:2023-Broken Authentication",
+                "cvss": 7.5,
+                "snippet": f"{method} {path}",
+                "fix": "Ensure state-changing endpoints (PUT/DELETE/PATCH) strictly enforce authentication and authorization.",
             })
 
-    # Check for insecure transport in OpenAPI spec
+        # Sensitive Query Parameters (e.g. ?token=, ?password=)
+        for param in e.get("parameters", []):
+            if isinstance(param, dict) and param.get("in") == "query":
+                pname = str(param.get("name", "")).lower()
+                if pname in ("password", "passwd", "token", "secret", "api_key", "apikey", "auth"):
+                    findings.append({
+                        "type": f"[{parsed_spec['spec_type']}] Sensitive Information Passed in Query Parameter ({pname})",
+                        "severity": "high",
+                        "file": spec_file,
+                        "line": 0,
+                        "cwe": "CWE-598",
+                        "owasp": "API2:2023-Broken Authentication",
+                        "cvss": 7.4,
+                        "snippet": f"Endpoint: {method} {path} | Query Param: {param.get('name')}",
+                        "fix": "Pass sensitive credentials in the Authorization header or request body, never in URL query strings (which get logged in proxies and browser history).",
+                    })
+
+    # 3. Check for insecure HTTP scheme declaration
     raw = parsed_spec.get("raw_data", {})
     schemes = raw.get("schemes", [])
     if "http" in schemes and "https" not in schemes:
         findings.append({
-            "type": f"[{parsed_spec['spec_type']}] Insecure HTTP Scheme Declared",
+            "type": f"[{parsed_spec['spec_type']}] Insecure HTTP Scheme Declared in Contract",
             "severity": "critical",
             "file": spec_file,
             "line": 0,
+            "cwe": "CWE-319",
+            "owasp": "API2:2023-Broken Authentication",
+            "cvss": 9.1,
             "snippet": "schemes: ['http']",
-            "fix": "Require HTTPS exclusively for all API endpoints.",
+            "fix": "Enforce HTTPS exclusively for all declared API server schemes.",
         })
 
     return findings
@@ -196,7 +246,7 @@ def audit_spec_statically(parsed_spec):
 
 def probe_spec_endpoints(parsed_spec, target_url=None):
     """
-    Conducts passive probes against endpoints discovered in the spec.
+    Conducts passive probes against endpoints declared in the spec.
     """
     findings = []
     if not parsed_spec:
@@ -212,9 +262,8 @@ def probe_spec_endpoints(parsed_spec, target_url=None):
     endpoints = parsed_spec.get("endpoints", [])
     tested_paths = set()
 
-    for e in endpoints[:20]:  # Cap to first 20 endpoints for passive probing safety
+    for e in endpoints[:20]:
         p = e["path"]
-        # Replace parameter templates like {id} with test value
         clean_path = p
         if "{" in clean_path:
             import re
@@ -225,7 +274,6 @@ def probe_spec_endpoints(parsed_spec, target_url=None):
         tested_paths.add(clean_path)
 
         full_url = urljoin(base, clean_path)
-        # Check basic TLS / Auth enforcement per spec endpoint
         findings.extend(api_security.check_auth_enforcement(full_url))
 
     return findings
